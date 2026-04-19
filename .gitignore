@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Cache
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+.env                              # Секретные данные (токены, пароли)
+credentials.json                 # Google OAuth credentials
+config/token.json                # Google OAuth токен
+config/*.json                  # JSON конфиги (кроме примеров)
+*.xlsx                         # Excel файлы (ASSIGNMENTS_FILE, TIMETABLE_FILE)
+state.json                      # State файлы
+/tmp/
+
+# Keep examples
+config.example.json
+.env.example
