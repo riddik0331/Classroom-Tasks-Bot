@@ -274,13 +274,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot = app.bot_data.get("classroom_bot")
 
     if text == "🔄 Сформувати":
-        await update.message.reply_text("🔄 Перевіряю пошту та формую список...")
+        await update.message.reply_text("🔄 Перевіряю пошту...")
         count = bot.check_new_emails()
-        assignments = bot.get_assignments_for_period(7)
-        result_text = f"✅ Додано {count} нових завдань!\n\n" if count > 0 else "✅ Нових завдань немає.\n\n"
-        result_text += "📅 Завдання на найближчий тиждень:\n\n"
-        result_text += bot.format_assignments(assignments)
-        await update.message.reply_text(result_text, parse_mode="HTML", reply_markup=get_main_keyboard())
+        
+        if count > 0:
+            result_text = f"✅ Додано {count} нових завдань!"
+        else:
+            result_text = "✅ Нових завдань немає."
+        
+        await update.message.reply_text(result_text, reply_markup=get_main_keyboard())
 
     elif text == "📅 На Сьогодні":
         today = datetime.now().strftime("%Y-%m-%d")
