@@ -282,21 +282,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         result_text += bot.format_assignments(assignments)
         await update.message.reply_text(result_text, parse_mode="HTML", reply_markup=get_main_keyboard())
 
-    elif text == "📅 Сьогодні":
+    elif text == "📅 На Сьогодні":
         today = datetime.now().strftime("%Y-%m-%d")
         assignments = bot.storage.get_assignments_for_date(today)
         text_result = f"📅 Завдання на сьогодні ({today}):\n\n"
         text_result += bot.format_assignments(assignments)
         await update.message.reply_text(text_result, parse_mode="HTML", reply_markup=get_main_keyboard())
 
-    elif text == "📅 Завтра":
+    elif text == "📅 На Завтра":
         tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
         assignments = bot.storage.get_assignments_for_date(tomorrow)
         text_result = f"📅 Завдання на завтра ({tomorrow}):\n\n"
         text_result += bot.format_assignments(assignments)
         await update.message.reply_text(text_result, parse_mode="HTML", reply_markup=get_main_keyboard())
 
-    elif text == "📅 Тиждень":
+    elif text == "📅 На Тиждень":
         await update.message.reply_text("🔄 Перевіряю пошту...")
         count = bot.check_new_emails()
         assignments = bot.get_assignments_for_period(7)
@@ -370,8 +370,8 @@ def get_main_keyboard():
     from telegram import KeyboardButton, ReplyKeyboardMarkup
 
     keyboard = [
-        [KeyboardButton("🔄 Сформувати"), KeyboardButton("📅 Сьогодні")],
-        [KeyboardButton("📅 Завтра"), KeyboardButton("📅 Тиждень")],
+        [KeyboardButton("🔄 Сформувати"), KeyboardButton("📅 На Сьогодні")],
+        [KeyboardButton("📅 На Завтра"), KeyboardButton("📅 На Тиждень")],
     ]
 
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
