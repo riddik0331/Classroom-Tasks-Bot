@@ -285,16 +285,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(result_text, reply_markup=get_main_keyboard())
 
     elif text == "📅 На Сьогодні":
+        await update.message.reply_text("🔄 Перевіряю нові листи...")
+        new_count = bot.check_new_emails()
+        
         today = datetime.now().strftime("%Y-%m-%d")
         assignments = bot.storage.get_assignments_for_date(today)
+        
         text_result = f"📅 Завдання на сьогодні ({today}):\n\n"
+        if new_count > 0:
+            text_result += f"✅ Додано {new_count} нових завдань!\n\n"
         text_result += bot.format_assignments(assignments)
         await update.message.reply_text(text_result, parse_mode="HTML", reply_markup=get_main_keyboard())
 
     elif text == "📅 На Завтра":
+        await update.message.reply_text("🔄 Перевіряю нові листи...")
+        new_count = bot.check_new_emails()
+        
         tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
         assignments = bot.storage.get_assignments_for_date(tomorrow)
         text_result = f"📅 Завдання на завтра ({tomorrow}):\n\n"
+        if new_count > 0:
+            text_result += f"✅ Додано {new_count} нових завдань!\n\n"
         text_result += bot.format_assignments(assignments)
         await update.message.reply_text(text_result, parse_mode="HTML", reply_markup=get_main_keyboard())
 
