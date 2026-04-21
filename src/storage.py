@@ -31,6 +31,9 @@ class AssignmentStorage:
                 self._workbook = openpyxl.load_workbook(self.storage_file)
                 if "Assignments" in self._workbook.sheetnames:
                     self._worksheet = self._workbook["Assignments"]
+                    # Check if headers need update
+                    if self._worksheet.cell(1, 1).value != "ID":
+                        self._setup_headers()
                 else:
                     self._worksheet = self._workbook.create_sheet("Assignments")
                     self._setup_headers()
@@ -51,14 +54,15 @@ class AssignmentStorage:
         headers = [
             "ID",
             "Предмет",
-            "Задание",
-            "Учитель",
-            "Получено",
-            "Дедлайн",
-            "Время дедлайна",
-            "Ссылка",
+            "Завдання",
+            "Повний текст",
+            "Вчитель",
+            "Отримано",
+            "Срок",
+            "Час строку",
+            "Посилання",
             "Email ID",
-            "Выполнено",
+            "Виконано",
         ]
 
         header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
@@ -72,19 +76,26 @@ class AssignmentStorage:
             cell.alignment = Alignment(horizontal="center", wrap_text=True)
 
         # Set column widths
-        widths = [10, 25, 40, 30, 18, 18, 12, 50, 20, 12]
+        widths = [10, 25, 50, 80, 30, 18, 18, 12, 50, 20, 12]
         for col, width in enumerate(widths, start=1):
             self._worksheet.column_dimensions[get_column_letter(col)].width = width
 
+        # Set wrap text for all columns
+        for row in range(1, self._worksheet.max_row + 1):
+            for col in range(1, 12):
+                cell = self._worksheet.cell(row=row, column=col)
+                cell.alignment = Alignment(wrap_text=True, vertical='top')
+            # Set row height for data rows
+            if row > 1:
+                self._worksheet.row_dimensions[row].height = 60
+
     def _generate_id(self) -> str:
-        """Generate unique ID for assignment."""
         existing_ids = set()
         for row in range(2, self._worksheet.max_row + 1):
             cell_value = self._worksheet.cell(row=row, column=1).value
             if cell_value:
                 existing_ids.add(cell_value)
 
-        # Generate ID based on timestamp
         base_id = datetime.now().strftime("%Y%m%d%H%M%S")
         counter = 1
         while f"{base_id}_{counter}" in existing_ids:
@@ -105,23 +116,36 @@ class AssignmentStorage:
 
         # Calculate due date if not provided (use timetable)
         due_date = assignment.due_date
-        if not due_date and assignment.teacher_name:
-            try:
-                from .timetable import Timetable
-                timetable = Timetable(self.timetable_file)
-                
-                # Try to get subject from teacher
-                subject = timetable.get_subject_from_teacher(assignment.teacher_name)
-                if not subject:
-                    subject = assignment.course_name if assignment.course_name != "Unknown" else None
-                
-                if subject:
+
+        # If no due date in email, calculate from timetable or fallback to 2 days
+        if not due_date:
+            # Try to get subject
+            subject = assignment.course_name
+            if not subject or subject == "Unknown":
+                if assignment.teacher_name:
+                    from .subject_mappings import TEACHER_SUBJECTS
+                    for teacher_key, subjects_list in TEACHER_SUBJECTS.items():
+                        if teacher_key.split()[0].lower() in assignment.teacher_name.lower():
+                            subject = subjects_list[0]
+                            break
+
+            # Try timetable
+            if subject and subject != "Unknown":
+                try:
+                    from .timetable import Timetable
+                    timetable = Timetable(self.timetable_file)
                     next_lesson = timetable.find_next_lesson(subject, assignment.received_date)
                     if next_lesson:
                         due_date = next_lesson
-                        logger.info(f"Calculated due date from timetable for {subject}: {due_date}")
-            except Exception as e:
-                logger.warning(f"Failed to calculate due date from timetable: {e}")
+                        logger.info(f"Calculated due date from timetable: {due_date}")
+                except Exception as e:
+                    logger.warning(f"Timetable error: {e}")
+
+            # Fallback: 2 days if no timetable match
+            if not due_date:
+                from datetime import timedelta
+                due_date = assignment.received_date + timedelta(days=2)
+                logger.info(f"Using fallback due date: {due_date}")
 
         # Add new row
         row = self._worksheet.max_row + 1
@@ -129,15 +153,16 @@ class AssignmentStorage:
         self._worksheet.cell(row=row, column=1).value = assignment_id
         self._worksheet.cell(row=row, column=2).value = assignment.course_name
         self._worksheet.cell(row=row, column=3).value = assignment.assignment_title
-        self._worksheet.cell(row=row, column=4).value = assignment.teacher_name
-        self._worksheet.cell(row=row, column=5).value = assignment.received_date.strftime("%Y-%m-%d %H:%M")
-        self._worksheet.cell(row=row, column=6).value = (
+        self._worksheet.cell(row=row, column=4).value = assignment.assignment_text
+        self._worksheet.cell(row=row, column=5).value = assignment.teacher_name
+        self._worksheet.cell(row=row, column=6).value = assignment.received_date.strftime("%Y-%m-%d %H:%M")
+        self._worksheet.cell(row=row, column=7).value = (
             due_date.strftime("%Y-%m-%d") if due_date else ""
         )
-        self._worksheet.cell(row=row, column=7).value = assignment.due_time or ""
-        self._worksheet.cell(row=row, column=8).value = assignment.link
-        self._worksheet.cell(row=row, column=9).value = assignment.email_id
-        self._worksheet.cell(row=row, column=10).value = "Нет"
+        self._worksheet.cell(row=row, column=8).value = assignment.due_time or ""
+        self._worksheet.cell(row=row, column=9).value = assignment.link
+        self._worksheet.cell(row=row, column=10).value = assignment.email_id
+        self._worksheet.cell(row=row, column=11).value = "Ні"
 
         # Format due date if present
         if due_date:
@@ -152,7 +177,7 @@ class AssignmentStorage:
     def _find_by_email_id(self, email_id: str) -> Optional[int]:
         """Find row by email ID."""
         for row in range(2, self._worksheet.max_row + 1):
-            if self._worksheet.cell(row=row, column=9).value == email_id:
+            if self._worksheet.cell(row=row, column=10).value == email_id:
                 return row
         return None
 
@@ -160,14 +185,15 @@ class AssignmentStorage:
         """Update existing assignment."""
         self._worksheet.cell(row=row, column=2).value = assignment.course_name
         self._worksheet.cell(row=row, column=3).value = assignment.assignment_title
-        self._worksheet.cell(row=row, column=4).value = assignment.teacher_name
-        self._worksheet.cell(row=row, column=5).value = assignment.received_date.strftime("%Y-%m-%d %H:%M")
+        self._worksheet.cell(row=row, column=4).value = assignment.assignment_text
+        self._worksheet.cell(row=row, column=5).value = assignment.teacher_name
+        self._worksheet.cell(row=row, column=6).value = assignment.received_date.strftime("%Y-%m-%d %H:%M")
         if assignment.due_date:
-            self._worksheet.cell(row=row, column=6).value = assignment.due_date.strftime("%Y-%m-%d")
+            self._worksheet.cell(row=row, column=7).value = assignment.due_date.strftime("%Y-%m-%d")
         if assignment.due_time:
-            self._worksheet.cell(row=row, column=7).value = assignment.due_time
+            self._worksheet.cell(row=row, column=8).value = assignment.due_time
         if assignment.link:
-            self._worksheet.cell(row=row, column=8).value = assignment.link
+            self._worksheet.cell(row=row, column=9).value = assignment.link
 
         self.save()
 
@@ -185,7 +211,7 @@ class AssignmentStorage:
         assignments = []
 
         for row in range(2, self._worksheet.max_row + 1):
-            is_completed = self._worksheet.cell(row=row, column=10).value == "Да"
+            is_completed = self._worksheet.cell(row=row, column=11).value == "Так"
 
             if completed is not None and is_completed != completed:
                 continue
@@ -194,11 +220,12 @@ class AssignmentStorage:
                 "id": self._worksheet.cell(row=row, column=1).value,
                 "course": self._worksheet.cell(row=row, column=2).value,
                 "title": self._worksheet.cell(row=row, column=3).value,
-                "teacher": self._worksheet.cell(row=row, column=4).value,
-                "received": self._worksheet.cell(row=row, column=5).value,
-                "due_date": self._worksheet.cell(row=row, column=6).value,
-                "due_time": self._worksheet.cell(row=row, column=7).value,
-                "link": self._worksheet.cell(row=row, column=8).value,
+                "full_text": self._worksheet.cell(row=row, column=4).value,
+                "teacher": self._worksheet.cell(row=row, column=5).value,
+                "received": self._worksheet.cell(row=row, column=6).value,
+                "due_date": self._worksheet.cell(row=row, column=7).value,
+                "due_time": self._worksheet.cell(row=row, column=8).value,
+                "link": self._worksheet.cell(row=row, column=9).value,
                 "completed": is_completed,
             }
             assignments.append(assignment)
@@ -214,7 +241,7 @@ class AssignmentStorage:
         """Mark assignment as completed."""
         for row in range(2, self._worksheet.max_row + 1):
             if self._worksheet.cell(row=row, column=1).value == assignment_id:
-                self._worksheet.cell(row=row, column=10).value = "Да"
+                self._worksheet.cell(row=row, column=10).value = "Так"
                 self.save()
                 logger.info(f"Marked assignment {assignment_id} as completed")
                 return True

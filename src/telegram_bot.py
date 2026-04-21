@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 from telegram import Update
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
 
 from . import config
 from .gmail_client import GmailClient
@@ -67,15 +67,15 @@ class ClassroomBot:
     def format_assignments(self, assignments: list[dict]) -> str:
         """Format assignments for display."""
         if not assignments:
-            return "Нет заданий 😔"
+            return "Немає завдань 😔"
 
         lines = []
-        
+
         # Group by date
         from collections import defaultdict
         by_date = defaultdict(list)
         for a in assignments:
-            due = a.get("due_date", "Без срока")
+            due = a.get("due_date", "Без строку")
             by_date[due].append(a)
 
         # Format each date group
@@ -86,12 +86,12 @@ class ClassroomBot:
                 date_obj = datetime.strptime(date, "%Y-%m-%d").date()
             except:
                 pass
-            
+
             # Format date in Ukrainian
             if date_obj:
                 months_uk = {
                     1: "січня", 2: "лютого", 3: "березня", 4: "квітня",
-                    5: "травня", 6: "червня", 7: "липня", 8: "серпня",
+                    5: "травня", 6: "червня", 7: "липня", 8: "серпн��",
                     9: "вересня", 10: "жовтня", 11: "листопада", 12: "грудня"
                 }
                 # Check if it's today or tomorrow
@@ -107,16 +107,27 @@ class ClassroomBot:
                     date_str_uk = f"{day} {month} {year}"
             else:
                 date_str_uk = date
-            
+
             lines.append(f"📅 <b>Завдання на {date_str_uk}</b>")
-            
+
             for a in by_date[date]:
-                subject = a.get("course", "Неизвестно")
-                title = a.get("title", "Нет названия")
+                subject = a.get("course", "Невідомо")
+                title = a.get("title", "Без назви")
                 teacher = a.get("teacher", "")
-                
+                full_text = a.get("full_text", "")
+
                 lines.append(f"  📚 {subject}")
-                lines.append(f"     📝 {title[:50]}...")
+                # Escape HTML in title
+                title_escaped = title.replace('<', '').replace('>', '')
+                lines.append(f"     📝 {title_escaped}")
+                if full_text:
+                    # Remove URLs and clean up for HTML
+                    import re
+                    clean_text = re.sub(r'https?://\S+', '', full_text)  # Remove URLs
+                    clean_text = clean_text.replace('<', '').replace('>', '')  # Remove HTML tags
+                    clean_text = clean_text.strip()
+                    if clean_text:
+                        lines.append(f"     📄 {clean_text[:500]}")
                 if teacher:
                     lines.append(f"     👨‍🏫 {teacher}")
                 lines.append("")
@@ -149,8 +160,8 @@ class ClassroomBot:
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command."""
     await update.message.reply_text(
-        "Привет! Я бот для отслеживания заданий Google Classroom.\n\n"
-        "Нажми кнопку ниже, чтобы получить задания.",
+        "Привіт! Я бот для відстеження завдань Google Classroom.\n\n"
+        "Натисни кнопку нижче, щоб отримати завдання.",
         reply_markup=get_main_keyboard()
     )
 
@@ -158,12 +169,12 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /help command."""
     await update.message.reply_text(
-        "Команды:\n"
-        "/start - Начать\n"
-        "/today - Задания на сегодня\n"
-        "/tomorrow - Задания на завтра\n"
-        "/week - Задания на неделю\n"
-        "/refresh - Проверить почту и обновить"
+        "Команди:\n"
+        "/start - Почати\n"
+        "/today - Завдання на сьогодні\n"
+        "/tomorrow - Завдання на завтра\n"
+        "/week - Завдання на тиждень\n"
+        "/refresh - Перевірити пошту та оновити"
     )
 
 
@@ -174,12 +185,19 @@ async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     bot = app.bot_data.get("classroom_bot")
+    
+    # First check for new emails
+    await update.message.reply_text("🔄 Перевіряю нові листи...", parse_mode="HTML")
+    new_count = bot.check_new_emails()
+    
     today = datetime.now().strftime("%Y-%m-%d")
     assignments = bot.storage.get_assignments_for_date(today)
-    
-    text = f"📅 Задания на сегодня ({today}):\n\n"
+
+    text = f"📅 Завдання на сьогодні ({today}):\n\n"
+    if new_count > 0:
+        text += f"✅ Додано {new_count} нових завдань!\n\n"
     text += bot.format_assignments(assignments)
-    
+
     await update.message.reply_text(text, parse_mode="HTML")
 
 
@@ -190,12 +208,19 @@ async def tomorrow_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     bot = app.bot_data.get("classroom_bot")
+    
+    # First check for new emails
+    await update.message.reply_text("🔄 Перевіряю нові листи...", parse_mode="HTML")
+    new_count = bot.check_new_emails()
+    
     tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
     assignments = bot.storage.get_assignments_for_date(tomorrow)
-    
-    text = f"📅 Задания на завтра ({tomorrow}):\n\n"
+
+    text = f"📅 Завдання на завтра ({tomorrow}):\n\n"
+    if new_count > 0:
+        text += f"✅ Додано {new_count} нових завдань!\n\n"
     text += bot.format_assignments(assignments)
-    
+
     await update.message.reply_text(text, parse_mode="HTML")
 
 
@@ -206,11 +231,18 @@ async def week_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     bot = app.bot_data.get("classroom_bot")
+    
+    # First check for new emails
+    await update.message.reply_text("🔄 Перевіряю нові листи...", parse_mode="HTML")
+    new_count = bot.check_new_emails()
+    
     assignments = bot.get_assignments_for_period(7)
-    
-    text = "📅 Задания на ближайшую неделю:\n\n"
+
+    text = "📅 Завдання на найближчий тиждень:\n\n"
+    if new_count > 0:
+        text += f"✅ Додано {new_count} нових завдань!\n\n"
     text += bot.format_assignments(assignments)
-    
+
     await update.message.reply_text(text, parse_mode="HTML")
 
 
@@ -221,85 +253,127 @@ async def refresh_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     bot = app.bot_data.get("classroom_bot")
-    
-    await update.message.reply_text("🔄 Проверяю почту...")
-    
+
+    await update.message.reply_text("🔄 Перевіряю пошту...")
+
     count = bot.check_new_emails()
-    
+
     if count > 0:
-        await update.message.reply_text(f"✅ Добавлено {count} новых заданий!")
+        await update.message.reply_text(f"✅ Додано {count} нових завдань!")
     else:
-        await update.message.reply_text("✅ Новых заданий нет.")
+        await update.message.reply_text("✅ Нових завдань немає.")
+
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle text messages from keyboard buttons."""
+    text = update.message.text
+    app = context.bot_data.get("app")
+    if not app:
+        return
+
+    bot = app.bot_data.get("classroom_bot")
+
+    if text == "🔄 Сформувати":
+        await update.message.reply_text("🔄 Перевіряю пошту та формую список...")
+        count = bot.check_new_emails()
+        assignments = bot.get_assignments_for_period(7)
+        result_text = f"✅ Додано {count} нових завдань!\n\n" if count > 0 else "✅ Нових завдань немає.\n\n"
+        result_text += "📅 Завдання на найближчий тиждень:\n\n"
+        result_text += bot.format_assignments(assignments)
+        await update.message.reply_text(result_text, parse_mode="HTML", reply_markup=get_main_keyboard())
+
+    elif text == "📅 Сьогодні":
+        today = datetime.now().strftime("%Y-%m-%d")
+        assignments = bot.storage.get_assignments_for_date(today)
+        text_result = f"📅 Завдання на сьогодні ({today}):\n\n"
+        text_result += bot.format_assignments(assignments)
+        await update.message.reply_text(text_result, parse_mode="HTML", reply_markup=get_main_keyboard())
+
+    elif text == "📅 Завтра":
+        tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+        assignments = bot.storage.get_assignments_for_date(tomorrow)
+        text_result = f"📅 Завдання на завтра ({tomorrow}):\n\n"
+        text_result += bot.format_assignments(assignments)
+        await update.message.reply_text(text_result, parse_mode="HTML", reply_markup=get_main_keyboard())
+
+    elif text == "📅 Тиждень":
+        await update.message.reply_text("🔄 Перевіряю пошту...")
+        count = bot.check_new_emails()
+        assignments = bot.get_assignments_for_period(7)
+        result = f"✅ Додано {count} нових завдань!\n\n" if count > 0 else ""
+        result += "📅 Завдання на найближчий тиждень:\n\n"
+        result += bot.format_assignments(assignments)
+        await update.message.reply_text(result, parse_mode="HTML", reply_markup=get_main_keyboard())
 
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle button callbacks."""
     query = update.callback_query
     await query.answer()
-    
+
     app = context.bot_data.get("app")
     if not app:
         return
 
     bot = app.bot_data.get("classroom_bot")
-    
+
     if query.data == "refresh":
-        await query.edit_message_text("🔄 Проверяю почту...")
+        await query.edit_message_text("🔄 Перевіряю пошту...")
         count = bot.check_new_emails()
-        
+
         if count > 0:
-            await query.edit_message_text(f"✅ Добавлено {count} новых заданий!")
+            await query.edit_message_text(f"✅ Додано {count} нових завдань!")
         else:
-            await query.edit_message_text("✅ Новых заданий нет.")
-    
+            await query.edit_message_text("✅ Нових завдань немає.")
+
     elif query.data == "today":
         today = datetime.now().strftime("%Y-%m-%d")
         assignments = bot.storage.get_assignments_for_date(today)
-        text = f"📅 Задания на сегодня ({today}):\n\n"
+        text = f"📅 Завдання на сьогодні ({today}):\n\n"
         text += bot.format_assignments(assignments)
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_main_keyboard())
-    
+
     elif query.data == "tomorrow":
         tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
         assignments = bot.storage.get_assignments_for_date(tomorrow)
-        text = f"📅 Задания на завтра ({tomorrow}):\n\n"
+        text = f"📅 Завдання на завтра ({tomorrow}):\n\n"
         text += bot.format_assignments(assignments)
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_main_keyboard())
-    
+
     elif query.data == "week":
         assignments = bot.get_assignments_for_period(7)
-        text = "📅 Задания на ближайшую неделю:\n\n"
+        text = "📅 Завдання на найближчий тиждень:\n\n"
         text += bot.format_assignments(assignments)
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_main_keyboard())
-    
+
     elif query.data == "form":
         # First refresh, then show week
-        await query.edit_message_text("🔄 Проверяю почту и формирую список...")
-        
+        await query.edit_message_text("🔄 Перевіряю пошту та формую список...")
+
         count = bot.check_new_emails()
-        
+
         assignments = bot.get_assignments_for_period(7)
-        
+
         if count > 0:
-            text = f"✅ Добавлено {count} новых заданий!\n\n"
+            text = f"✅ Додано {count} нових завдань!\n\n"
         else:
-            text = "✅ Новых заданий нет.\n\n"
-        
-        text += "📅 Задания на ближайшую неделю:\n\n"
+            text = "✅ Нових завдань немає.\n\n"
+
+        text += "📅 Завдання на найближчий тиждень:\n\n"
         text += bot.format_assignments(assignments)
-        
+
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=get_main_keyboard())
 
 
 def get_main_keyboard():
     """Get main keyboard with buttons."""
     from telegram import KeyboardButton, ReplyKeyboardMarkup
-    
+
     keyboard = [
-        [KeyboardButton("🔄 Сформировать"), KeyboardButton("📅 Сегодня")],
-        [KeyboardButton("📅 Завтра"), KeyboardButton("📅 Неделя")],
+        [KeyboardButton("🔄 Сформувати"), KeyboardButton("📅 Сьогодні")],
+        [KeyboardButton("📅 Завтра"), KeyboardButton("📅 Тиждень")],
     ]
-    
+
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 
@@ -322,7 +396,8 @@ def run_bot(token: str, storage_file: str = "assignments.xlsx", timetable_file: 
     application.add_handler(CommandHandler("tomorrow", tomorrow_command))
     application.add_handler(CommandHandler("week", week_command))
     application.add_handler(CommandHandler("refresh", refresh_command))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(CallbackQueryHandler(button_callback))
     
     # Start polling
-    application.run_polling(pending_updates=True)
+    application.run_polling()

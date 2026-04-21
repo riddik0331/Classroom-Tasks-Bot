@@ -194,7 +194,7 @@ class GmailClient:
 
         # Build search query
         base_queries = [
-            "from:noreply@classroom.google.com",
+            "from:no-reply@classroom.google.com",  # no-reply with hyphen
             "from:s5.ukr.education",  # Forwarded from school email
             "from:ukr.education",      # Any ukr.education domain
         ]
@@ -358,52 +358,65 @@ class GmailClient:
 
         return datetime.now()
 
+    def _decode_body_data(self, data: str) -> str:
+        """Decode base64url-encoded body data with multiple encoding attempts."""
+        try:
+            raw = base64.urlsafe_b64decode(data + "==")
+        except Exception:
+            return ""
+
+        # Try multiple encodings
+        encodings = ["utf-8", "windows-1251", "koi8-u", "iso-8859-5"]
+
+        for encoding in encodings:
+            try:
+                return raw.decode(encoding)
+            except Exception:
+                continue
+
+        # Fallback with replacement
+        return raw.decode("utf-8", errors="replace")
+
     def _get_body_from_payload(self, payload: dict) -> str:
         """Extract body text from email payload."""
         # Handle multipart messages
         if "parts" in payload:
             parts = payload["parts"]
-            
+
             # Try text/plain first
             for part in parts:
                 if part.get("mimeType") == "text/plain":
                     data = part.get("body", {}).get("data")
                     if data:
-                        try:
-                            return base64.urlsafe_b64decode(data).decode("utf-8", errors="replace")
-                        except Exception:
-                            continue
-                
+                        result = self._decode_body_data(data)
+                        if result:
+                            return result
+
                 # Check nested parts
                 if "parts" in part:
                     result = self._get_body_from_payload(part)
                     if result:
                         return result
-            
+
             # Fall back to text/html if no text/plain
             for part in parts:
                 if part.get("mimeType") == "text/html":
                     data = part.get("body", {}).get("data")
                     if data:
-                        try:
-                            html = base64.urlsafe_b64decode(data).decode("utf-8", errors="replace")
+                        html = self._decode_body_data(data)
+                        if html:
                             # Try to extract readable text from HTML
                             import re
                             # Remove HTML tags
                             text = re.sub(r'<[^>]+>', ' ', html)
                             text = re.sub(r'\s+', ' ', text)
                             return text.strip()
-                        except Exception:
-                            continue
 
         # Try body directly (non-multipart)
         if "body" in payload:
             data = payload["body"].get("data")
             if data:
-                try:
-                    return base64.urlsafe_b64decode(data).decode("utf-8", errors="replace")
-                except Exception:
-                    pass
+                return self._decode_body_data(data)
 
         return ""
 
