@@ -102,7 +102,77 @@ class AIAnalyzer:
         except Exception as e:
             logger.error(f"AI analysis failed: {e}")
             return None
+    
+    def full_parse_email(self, email_text: str, teacher: str = "") -> Optional[dict]:
+        """
+        Parse email with AI to extract:
+        - subject (Предмет)
+        - teacher (Учитель)
+        - title (Название задания)
+        - full_text (Полный текст задания)
+        - email_date (Дата когда пришло письмо)
+        """
+        if not self._client:
+            return None
 
+        prompt = f"""Ти - асистент для парсингу листів Google Classroom.
+Проаналізуй текст листа і витягни всю інформацію.
+
+Email text:
+{email_text[:2000]}
+
+Виведи результат у форматі JSON (тільки JSON, без додаткового тексту):
+{{
+  "subject": "Назва предмета",
+  "teacher": "ПІБ вчителя",
+  "title": "Коротка назва завдання",
+  "full_text": "Повний текст завдання",
+  "email_date": "YYYY-MM-DD"
+}}
+
+Правила:
+- subject: тільки з списку: Алгебра, Геометрія, Біологія, Фізика, Хімія, Українська мова, Англійська мова, Німецька мова, Історія України, Всесвітня історія, Географія, Правознавство, Фізична культура, Захист Вітчизни, Основи здоров'я, Музичне мистецтво, Образотворче мистецтво, Технології, Інформатика
+- teacher: ПІБ вчителя
+- title: перші 100 символів завдання
+- full_text: повний текст між "Нове завдання" і "Докладніше"
+- email_date: дата у форматі YYYY-MM-DD (коли прийшло завдання)
+"""
+
+        try:
+            chat_completion = self._client.chat.completions.create(
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                model="llama-3.3-70b-versatile",
+                temperature=0.1,
+                max_tokens=500,
+            )
+
+            import json
+            result_text = chat_completion.choices[0].message.content.strip()
+            
+            # Parse JSON
+            try:
+                # Remove markdown if present
+                if "```json" in result_text:
+                    result_text = result_text.split("```json")[1].split("```")[0]
+                elif "```" in result_text:
+                    result_text = result_text.split("```")[1].split("```")[0]
+                
+                result = json.loads(result_text.strip())
+                logger.info(f"AI parsed: subject={result.get('subject')}, teacher={result.get('teacher')}")
+                return result
+            except json.JSONDecodeError:
+                logger.warning(f"Failed to parse AI JSON: {result_text[:200]}")
+                return None
+
+        except Exception as e:
+            logger.error(f"AI parse error: {e}")
+            return None
+    
     def _build_prompt(self, assignment_text: str, teacher: str) -> str:
         """Build prompt for AI."""
         subjects_str = ", ".join(SUBJECTS)

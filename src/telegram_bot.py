@@ -284,6 +284,77 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             result_text = "✅ Нових завдань немає."
         
         await update.message.reply_text(result_text, reply_markup=get_main_keyboard())
+    
+    elif text == "🤖 AI-Парсинг":
+        await update.message.reply_text("🤖 AI-парсинг...")
+        
+        # Check for new emails (get list first)
+        from src.gmail_client import GmailClient
+        from src.config import load_config
+        from src.storage import AssignmentStorage, ClassroomAssignment
+        from src.ai_analyzer import AIAnalyzer
+        
+        cfg = load_config()
+        gmail = GmailClient(cfg.credentials_file, cfg.token_file)
+        # Only unread emails
+        emails = gmail.get_classroom_emails(max_results=20, unread_only=True)
+        
+        if not emails:
+            await update.message.reply_text("✅ Немає нових листів.", reply_markup=get_main_keyboard())
+            return
+        
+        # AI parse each email
+        ai = AIAnalyzer()
+        if not ai.is_available():
+            await update.message.reply_text("❌ AI недоступний.", reply_markup=get_main_keyboard())
+            return
+        
+        storage = AssignmentStorage()
+        count = 0
+        parsed_ids = []
+        
+        for email in emails:
+            # AI parse
+            parsed = ai.full_parse_email(email.body, email.from_address)
+            if parsed and parsed.get('subject'):
+                # Save to storage
+                from datetime import datetime
+                from src.gmail_client import EmailMessage
+                
+                email_msg = EmailMessage(
+                    id=email.id,
+                    thread_id=email.thread_id or "",
+                    subject=parsed.get('title', ''),
+                    from_address=parsed.get('teacher', ''),
+                    date=email.date,
+                    body=email.body,
+                    snippet=''
+                )
+                
+                # Create assignment object
+                assignment = ClassroomAssignment(
+                    email_id=email.id,
+                    course_name=parsed.get('subject', ''),
+                    assignment_title=parsed.get('title', ''),
+                    assignment_text=parsed.get('full_text', ''),
+                    teacher_name=parsed.get('teacher', ''),
+                    received_date=email.date,
+                )
+                
+                storage.add_assignment(assignment)
+                count += 1
+                parsed_ids.append(email.id)
+        
+        # Mark as read after successful parsing
+        if parsed_ids:
+            gmail.mark_as_read(parsed_ids)
+        
+        if count > 0:
+            result_text = f"✅ AI обробив {count} нових завдань!"
+        else:
+            result_text = "✅ Нових завдань немає."
+        
+        await update.message.reply_text(result_text, reply_markup=get_main_keyboard())
 
     elif text == "📅 На Сьогодні":
         await update.message.reply_text("🔄 Перевіряю нові листи...")
@@ -384,8 +455,9 @@ def get_main_keyboard():
     from telegram import KeyboardButton, ReplyKeyboardMarkup
 
     keyboard = [
-        [KeyboardButton("🔄 Сформувати"), KeyboardButton("📅 На Сьогодні")],
-        [KeyboardButton("📅 На Завтра"), KeyboardButton("📅 На Тиждень")],
+        [KeyboardButton("🔄 Сформувати"), KeyboardButton("🤖 AI-Парсинг")],
+        [KeyboardButton("📅 На Сьогодні"), KeyboardButton("📅 На Завтра")],
+        [KeyboardButton("📅 На Тиждень")],
     ]
 
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
