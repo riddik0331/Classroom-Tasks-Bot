@@ -233,14 +233,15 @@ class GmailClient:
                         seen_ids.add(msg_id["id"])
                         
                         try:
+                            # Get raw message for proper text/plain extraction
                             msg = (
                                 service.users()
                                 .messages()
-                                .get(userId="me", id=msg_id["id"], format="full")
+                                .get(userId="me", id=msg_id["id"], format="raw")
                                 .execute()
                             )
 
-                            email = self._parse_message(msg)
+                            email = self._parse_raw_message(msg)
                             if email:
                                 messages.append(email)
 
@@ -419,6 +420,56 @@ class GmailClient:
                 return self._decode_body_data(data)
 
         return ""
+
+    def _parse_raw_message(self, raw_msg: dict) -> EmailMessage | None:
+        """Parse a raw Gmail message into EmailMessage."""
+        try:
+            import base64
+            import email
+            from email import policy
+            
+            raw_data = raw_msg.get("raw", "")
+            if not raw_data:
+                return None
+            
+            # Decode base64url
+            raw_bytes = base64.urlsafe_b64decode(raw_data.encode('ASCII'))
+            msg = email.message_from_bytes(raw_bytes, policy=policy.default)
+            
+            # Extract headers
+            subject = msg.get("Subject", "")
+            from_addr = msg.get("From", "")
+            date_str = msg.get("Date", "")
+            
+            # Parse date
+            try:
+                date = self._parse_date(date_str)
+            except Exception:
+                date = datetime.now()
+            
+            # Get body - prefer text/plain
+            body = ""
+            if msg.is_multipart():
+                for part in msg.walk():
+                    if part.get_content_type() == "text/plain":
+                        body = part.get_content() or ""
+                        if body:
+                            break
+            else:
+                body = msg.get_content() or ""
+            
+            return EmailMessage(
+                id=raw_msg.get("id", ""),
+                thread_id=raw_msg.get("threadId", ""),
+                subject=subject,
+                from_address=from_addr,
+                date=date,
+                body=body,
+                snippet="",
+            )
+        except Exception as e:
+            logger.warning(f"Failed to parse raw message: {e}")
+            return None
 
     def get_new_emails_since(self, since: datetime) -> list[EmailMessage]:
         """Get Classroom emails newer than a specific datetime."""

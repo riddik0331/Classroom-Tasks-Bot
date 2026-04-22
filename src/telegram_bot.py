@@ -112,22 +112,23 @@ class ClassroomBot:
 
             for a in by_date[date]:
                 subject = a.get("course", "Невідомо")
-                title = a.get("title", "Без назви")
-                teacher = a.get("teacher", "")
+                # Use full_text as the main task text (from body), fallback to title if empty
                 full_text = a.get("full_text", "")
+                title = a.get("title", "")
+                task_text = full_text if full_text else title
+                teacher = a.get("teacher", "")
 
                 lines.append(f"  📚 {subject}")
-                # Escape HTML in title
-                title_escaped = title.replace('<', '').replace('>', '')
-                lines.append(f"     📝 {title_escaped}")
-                if full_text:
-                    # Remove URLs and clean up for HTML
+                if task_text:
+                    # Clean task text but keep URLs
                     import re
-                    clean_text = re.sub(r'https?://\S+', '', full_text)  # Remove URLs
-                    clean_text = clean_text.replace('<', '').replace('>', '')  # Remove HTML tags
+                    clean_text = task_text
+                    # Remove only image tags
+                    clean_text = re.sub(r'\[image:[^\]]+\]', '', clean_text)
+                    clean_text = clean_text.replace('To:', '').replace('налаштування сповіщень', '')
                     clean_text = clean_text.strip()
                     if clean_text:
-                        lines.append(f"     📄 {clean_text[:500]}")
+                        lines.append(f"     📝 {clean_text[:500]}")
                 if teacher:
                     lines.append(f"     👨‍🏫 {teacher}")
                 lines.append("")

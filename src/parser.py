@@ -250,8 +250,27 @@ class EmailParser:
                         course_name = extracted
                         logger.debug(f"Course from '8-В' pattern: {course_name}")
 
-            # Extract full assignment text from body
+            # Extract full assignment text from body - ALWAYS from body, not subject
             assignment_text = cls._extract_assignment_text(body)
+            
+            # If still empty, try to get from body directly after "Нове завдання" marker
+            if not assignment_text or len(assignment_text) < 10:
+                lines = body.split('\n')
+                capture = False
+                parts = []
+                for line in lines:
+                    if 'Нове завдання' in line:
+                        capture = True
+                        continue
+                    if capture:
+                        # Stop at common markers
+                        lower = line.lower()
+                        if any(m in lower for m in ['докладніше', 'докладно', 'детальніше', 'опубліковано', 'https://', 'налаштування']):
+                            break
+                        if line.strip():
+                            parts.append(line.strip())
+                if parts:
+                    assignment_text = ' '.join(parts)
 
             # If still no due date, try AI to extract from assignment text
             if not due_date and assignment_text:
@@ -322,42 +341,70 @@ class EmailParser:
     def _extract_assignment_text(cls, body: str) -> str:
         """Extract full assignment text from email body (no truncation)."""
         try:
-            # Look for "Нове завдання" marker and get text after it
+            # Handle forwarded messages - skip header
             lines = body.split('\n')
+            
+            # Find where forwarded message content starts
+            start_idx = 0
+            for i, line in enumerate(lines):
+                if '---------- Forwarded message' in line or 'Forwarded message' in line:
+                    start_idx = i + 1
+                    break
+            
+            # Process lines from forwarded message content
             capturing = False
             text_parts = []
+            skip_empty = True  # Skip first empty lines after marker
             
-            for line in lines:
-                # Start capturing after "Нове завдання" marker
-                if 'Нове завдання' in line or 'New assignment' in line:
-                    capturing = True
-                    # If the line has content after "Нове завдання", include it
-                    if ':' in line:
-                        after_colon = line.split(':', 1)[1].strip()
-                        if after_colon:
-                            text_parts.append(after_colon)
+            for line in lines[start_idx:]:
+                # Skip header lines like "Subject:", "To:", "Від:", "Date:", "8-В"
+                line_lower = line.lower()
+                if line_lower.startswith(('subject:', 'to:', 'від:', 'date:', 'cc:', 'bcc:')):
+                    continue
+                # Skip "8-В Алгебра" like patterns
+                import re
+                if re.match(r'^\d+-[А-Яа-яІіЇїЄє]\s+\D+', line) or re.match(r'^\[image:', line):
                     continue
                 
-                # Stop at common markers like "Класна робота", "Оцінки", links, etc.
-                if capturing:
-                    line_lower = line.lower()
-                    # Stop at these markers
-                    if any(marker in line_lower for marker in [
-                        'класна робота', 'оцінки', 'матеріали', 'додатково', 
-                        'коментар', 'відповісти', 'опубліковано',
-                        'докладніше', 'детальніше', 'докладно', 'докладн',
-                        'показати', 'відкрити',
-                        'https://', 'http://', 'www.'
-                    ]):
-                        break
-                    if line.strip():
-                        text_parts.append(line.strip())
+                # Find "Нове завдання" (standalone, not in subject line)
+                if ('Нове завдання' in line or 'New assignment' in line) and not line_lower.startswith('subject'):
+                    # Start capturing AFTER this line - skip empty lines first
+                    skip_empty = True
+                    continue
+                
+                # After finding "Нове завдання", skip empty lines
+                if skip_empty:
+                    if not line.strip():
+                        continue
+                    # Found first non-empty line after marker - start capturing
+                    skip_empty = False
+                
+                # Stop ONLY at "Докладніше" (or similar)
+                if 'докладніше' in line_lower or 'детальніше' in line_lower:
+                    # Stop BEFORE this line
+                    break
+                
+                # Skip other markers but keep the text
+                if any(m in line_lower for m in [
+                    'оцінки', 'матеріали', 'додатково', 
+                    'коментар', 'відповісти', 'опубліковано',
+                    'настройка сповіщень', 'налаштування сповіщень',
+                ]):
+                    continue
+                
+                # Keep the line
+                if line.strip():
+                    text_parts.append(line.strip())
             
             full_text = ' '.join(text_parts)
-            # Clean up - remove URLs
+            # Clean up only obvious junk - keep URLs in assignment text
             import re
-            full_text = re.sub(r'https?://[^\s]+', '', full_text)
-            full_text = re.sub(r'<https?://[^>]+>', '', full_text)
+            full_text = re.sub(r'\[image:[^\]]+\]', '', full_text)
+            full_text = re.sub(r'<[^>]+>(?!\s*https?://)', '', full_text)  # Keep URLs
+            full_text = re.sub(r'Налаштування сповіщень', '', full_text, flags=re.IGNORECASE)
+            full_text = re.sub(r'To:\s*\S+@\S+', '', full_text)
+            # Keep URLs but clean up email addresses
+            full_text = re.sub(r'<\S+@\S+\.\S+>', '', full_text)
             full_text = full_text.strip()
             
             return full_text[:2000] if full_text else ""
